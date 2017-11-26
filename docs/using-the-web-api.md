@@ -1,27 +1,22 @@
 ## Using the web API
 
+`orchestrator` provides with an elaborate web API.
+
 A keen web developer would notice (via Firebug or Developer Tools) how the web interface
 completely relies on JSON API requests.
 
-The JSON API provides with all the maintenance functionality you can find in the web interface or the
-command line mode.
+The API can be used by developers for purpose of automation.
 
-> Most users will not be interested in accessing the API. If you're unsure: you don't need it.
-> For creators of frameworks and maintenance tools, it may provide with great powers (and great responsibility).
+### A very very brief look at a few API commands
 
-The following is a brief listing of the web API exposed by `orchestrator`. Documentation tends to fall behind the code; see the
-latest [API source code](https://github.com/github/orchestrator/blob/master/go/http/api.go) for the de-facto lsiting (scroll to end of file).
+By way of example:
 
 * `/api/instance/:host/:port`: reads and returns an instance's details (example `/api/instance/mysql10/3306`)
-* `/api/discover/:host/:port`: discover given instance (a running `orchestrator` service will pick it up from there and
-recursively scan the entire topology)
-* `/api/refresh/:host/:port`: synchronously re-read instance status
-* `/api/forget/:host/:port`: remove records of this instance. It may be automatically rediscovered by
-  following up on its master or one of its replicas.
-* `/api/resolve/:host/:port`: check if hostname resolves and whether TCP connection can be established (example: `/api/resolve/myhost.mydomain/3306`)  
+* `/api/discover/:host/:port`: discover given instance (a running `orchestrator` service will pick it up from there and recursively scan the entire topology)
 * `/api/relocate/:host/:port/:belowHost/:belowPort` (attempt to) move an instance below another instance.
-`Orchestrator` picks best course of action.
+`orchestrator` picks best course of action.
 * `/api/relocate-replicas/:host/:port/:belowHost/:belowPort` (attempt to) move replicas of an instance below another instance.
+<<<<<<< HEAD
 `Orchestrator` picks best course of action.
 * `/api/move-up/:host/:port` (attempt to) move this instance up the topology (make it child of its grandparent)
 * `/api/move-below/:host/:port/:siblingHost/:siblingPort` (attempt to) move an instance below its sibling.
@@ -65,6 +60,21 @@ The following urls allow access to the discovery metrics
 * `/api/discovery-metrics-raw/:seconds`: list the raw discovery metrics for the last specified number of seconds. Raw discovery metric data is kept for DiscoveryCollectionRetentionSeconds seconds (default: 120)
 
 #### Instance JSON breakdown
+=======
+`orchestrator` picks best course of action.
+* `/api/recover/:host/:post`: initiate recovery on given instance, assuming there is something to recover from.
+* `/api/force-master-failover/:mycluster`: force an immediate failover on given cluster.
+
+### Full listing
+
+The de-facto listing is the code, please see [api.go](https://github.com/github/orchestrator/blob/master/go/http/api.go) (scroll down to `RegisterRequests`).
+
+You may also appreciate looking at [orchestrator-client](orchestrator-client.md) ([source code](https://github.com/github/orchestrator/blob/master/resources/bin/orchestrator-client)) to see how command line interface is translated to API calls.
+
+Or, just use the [orchestrator-client](orchestrator-client.md) as your API client, this is what it was made for.
+
+### Instance JSON breakdown
+>>>>>>> refs/remotes/github/master
 
 Many API calls return _instance objects_, describing a single MySQL server.
 This sample is followed by a field breakdown:
@@ -145,6 +155,8 @@ This sample is followed by a field breakdown:
 }
 ```
 
+The structure of an Instance evolves and documentation will always fall behind. Having said that, key attributes are:
+
 * `Key`: unique indicator for the instance: a combination of host & port
 * `ServerID`: the MySQL `server_id` param
 * `Version`: MySQL version
@@ -184,3 +196,46 @@ This sample is followed by a field breakdown:
 * `CountMySQLSnapshots`: number of known snapshots (data provided by `orchestrator-agent`)
 * `IsCandidate`: (metadata) `true` when this instance has been marked as _candidate_ via the `register-candidate` CLI command. Can be used in crash recovery for prioritizing failover options
 * `UnresolvedHostname`: name this host _unresolves_ to, as indicated by the `register-hostname-unresolve` CLI command
+
+### Cheatsheet
+
+Here are a few useful examples of API usage:
+
+- Get general information about a cluster:
+```
+curl -s "http://my.orchestrator.service.com/api/cluster-info/my_cluster" | jq .
+
+{
+  "ClusterName": "my-cluster-fqdn:3306",
+  "ClusterAlias": "my_cluster",
+  "ClusterDomain": "my-cluster.com",
+  "CountInstances": 10,
+  "HeuristicLag": 0,
+  "HasAutomatedMasterRecovery": true,
+  "HasAutomatedIntermediateMasterRecovery": true
+}
+```
+
+- Find hosts in `my_cluster` that don't have binary logging:
+```
+curl -s "http://my.orchestrator.service.com/api/cluster/alias/my_cluster" | jq '.[] | select(.LogBinEnabled==false) .Key.Hostname' -r
+
+```
+
+- Find direct replicas of `my_cluster`'s master:
+```
+curl -s "http://my.orchestrator.service.com/api/cluster/alias/my_cluster" | jq '.[] | select(.ReplicationDepth==1) .Key.Hostname' -r
+```
+
+or:
+
+```
+master=$(curl -s "http://my.orchestrator.service.com/api/cluster-info/my_cluster" | jq '.ClusterName' | tr ':' '/')
+curl -s "http://my.orchestrator.service.com/api/instance-replicas/${master}" | jq '.[] | .Key.Hostname' -r
+```
+
+- Find all intermediate masters in `my_cluster`:
+
+```
+curl -s "http://my.orchestrator.service.com/api/cluster/alias/my_cluster" | jq '.[] | select(.MasterKey.Hostname!="") | select(.SlaveHosts!=[]) .Key.Hostname'
+```

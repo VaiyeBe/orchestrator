@@ -17,10 +17,42 @@
 package inst
 
 import (
-	"github.com/github/orchestrator/go/config"
+	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/github/orchestrator/go/config"
+	"github.com/github/orchestrator/go/kv"
 )
+
+func GetClusterMasterKVKey(clusterAlias string) string {
+	return fmt.Sprintf("%s%s", config.Config.KVClusterMasterPrefix, clusterAlias)
+}
+
+func GetClusterMasterKVPair(clusterAlias string, masterKey *InstanceKey) *kv.KVPair {
+	if clusterAlias == "" {
+		return nil
+	}
+	if masterKey == nil {
+		return nil
+	}
+	return kv.NewKVPair(GetClusterMasterKVKey(clusterAlias), masterKey.StringCode())
+}
+
+// mappedClusterNameToAlias attempts to match a cluster with an alias based on
+// configured ClusterNameToAlias map
+func mappedClusterNameToAlias(clusterName string) string {
+	for pattern, alias := range config.Config.ClusterNameToAlias {
+		if pattern == "" {
+			// sanity
+			continue
+		}
+		if matched, _ := regexp.MatchString(pattern, clusterName); matched {
+			return alias
+		}
+	}
+	return ""
+}
 
 // ClusterInfo makes for a cluster status/info summary
 type ClusterInfo struct {
@@ -42,6 +74,12 @@ func (this *ClusterInfo) ReadRecoveryInfo() {
 // filtersMatchCluster will see whether the given filters match the given cluster details
 func (this *ClusterInfo) filtersMatchCluster(filters []string) bool {
 	for _, filter := range filters {
+		if filter == this.ClusterName {
+			return true
+		}
+		if filter == this.ClusterAlias {
+			return true
+		}
 		if strings.HasPrefix(filter, "alias=") {
 			// Match by exact cluster alias name
 			alias := strings.SplitN(filter, "=", 2)[1]
@@ -69,10 +107,7 @@ func (this *ClusterInfo) ApplyClusterAlias() {
 		// Already has an alias; abort
 		return
 	}
-	// Try out the hard-wired config:
-	for pattern := range config.Config.ClusterNameToAlias {
-		if matched, _ := regexp.MatchString(pattern, this.ClusterName); matched {
-			this.ClusterAlias = config.Config.ClusterNameToAlias[pattern]
-		}
+	if alias := mappedClusterNameToAlias(this.ClusterName); alias != "" {
+		this.ClusterAlias = alias
 	}
 }

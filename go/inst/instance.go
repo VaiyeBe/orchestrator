@@ -21,35 +21,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/github/orchestrator/go/config"
-	"github.com/outbrain/golib/math"
+	"github.com/openark/golib/math"
 )
 
-// CandidatePromotionRule describe the promotion preference/rule for an instance.
-// It maps to promotion_rule column in candidate_database_instance
-type CandidatePromotionRule string
-
-const (
-	MustPromoteRule      CandidatePromotionRule = "must"
-	PreferPromoteRule                           = "prefer"
-	NeutralPromoteRule                          = "neutral"
-	PreferNotPromoteRule                        = "prefer_not"
-	MustNotPromoteRule                          = "must_not"
-)
-
-// ParseCandidatePromotionRule returns a CandidatePromotionRule by name.
-// It returns an error if there is no known rule by the given name.
-func ParseCandidatePromotionRule(ruleName string) (CandidatePromotionRule, error) {
-	switch ruleName {
-	case "prefer", "neutral", "must_not":
-		return CandidatePromotionRule(ruleName), nil
-	case "must", "prefer_not":
-		return CandidatePromotionRule(""), fmt.Errorf("CandidatePromotionRule: %v not supported yet", ruleName)
-	default:
-		return CandidatePromotionRule(""), fmt.Errorf("Invalid CandidatePromotionRule: %v", ruleName)
-	}
-}
+const ReasonableDiscoveryLatency = 500 * time.Millisecond
 
 // Instance represents a database instance, including its current configuration & status.
 // It presents important replication configuration and detailed replication status.
@@ -64,6 +42,7 @@ type Instance struct {
 	FlavorName             string
 	ReadOnly               bool
 	Binlog_format          string
+	BinlogRowImage         string
 	LogBinEnabled          bool
 	LogSlaveUpdatesEnabled bool
 	SelfBinlogCoordinates  BinlogCoordinates
@@ -106,14 +85,21 @@ type Instance struct {
 	SecondsSinceLastSeen sql.NullInt64
 	CountMySQLSnapshots  int
 
+	// Careful. IsCandidate and PromotionRule are used together
+	// and probably need to be merged. IsCandidate's value may
+	// be picked up from daabase_candidate_instance's value when
+	// reading an instance from the db.
 	IsCandidate          bool
 	PromotionRule        CandidatePromotionRule
 	IsDowntimed          bool
 	DowntimeReason       string
 	DowntimeOwner        string
 	DowntimeEndTimestamp string
+	ElapsedDowntime      time.Duration
 	UnresolvedHostname   string
 	AllowTLS             bool
+
+	LastDiscoveryLatency time.Duration
 }
 
 // NewInstance creates a new, empty instance
@@ -176,22 +162,22 @@ func (this *Instance) IsSmallerMajorVersionByString(otherVersion string) bool {
 	return IsSmallerMajorVersion(this.Version, otherVersion)
 }
 
-// IsMariaDB checkes whether this is any version of MariaDB
+// IsMariaDB checks whether this is any version of MariaDB
 func (this *Instance) IsMariaDB() bool {
 	return strings.Contains(this.Version, "MariaDB")
 }
 
-// IsPercona checkes whether this is any version of Percona Server
+// IsPercona checks whether this is any version of Percona Server
 func (this *Instance) IsPercona() bool {
 	return strings.Contains(this.VersionComment, "Percona")
 }
 
-// isMaxScale checkes whether this is any version of MaxScale
+// isMaxScale checks whether this is any version of MaxScale
 func (this *Instance) isMaxScale() bool {
 	return strings.Contains(this.Version, "maxscale")
 }
 
-// IsMaxScale checkes whether this is any type of a binlog server (currently only maxscale)
+// IsBinlogServer checks whether this is any type of a binlog server (currently only maxscale)
 func (this *Instance) IsBinlogServer() bool {
 	if this.isMaxScale() {
 		return true
@@ -199,7 +185,7 @@ func (this *Instance) IsBinlogServer() bool {
 	return false
 }
 
-// IsOracleMySQL checkes whether this is an Oracle MySQL distribution
+// IsOracleMySQL checks whether this is an Oracle MySQL distribution
 func (this *Instance) IsOracleMySQL() bool {
 	if this.IsMariaDB() {
 		return false
@@ -232,6 +218,16 @@ func (this *Instance) applyFlavorName() {
 	} else {
 		this.FlavorName = "unknown"
 	}
+}
+
+// FlavorNameAndMajorVersion returns a string of the combined
+// flavor and major version which is useful in some checks.
+func (this *Instance) FlavorNameAndMajorVersion() string {
+	if this.FlavorName == "" {
+		this.applyFlavorName()
+	}
+
+	return this.FlavorName + "-" + this.MajorVersionString()
 }
 
 // IsReplica makes simple heuristics to decide whether this insatnce is a replica of another instance
@@ -457,7 +453,7 @@ func (this *Instance) HumanReadableDescription() string {
 	if this.LogBinEnabled && this.LogSlaveUpdatesEnabled {
 		tokens = append(tokens, ">>")
 	}
-	if this.UsingGTID() {
+	if this.UsingGTID() || this.SupportsOracleGTID {
 		tokens = append(tokens, "GTID")
 	}
 	if this.UsingPseudoGTID {

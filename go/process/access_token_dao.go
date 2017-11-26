@@ -1,5 +1,5 @@
 /*
-   Copyright 2015 Shlomi Noach, GitHub Inc.
+   Copyright 2017 Shlomi Noach, GitHub Inc.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -19,8 +19,8 @@ package process
 import (
 	"github.com/github/orchestrator/go/config"
 	"github.com/github/orchestrator/go/db"
-	"github.com/outbrain/golib/log"
-	"github.com/outbrain/golib/sqlutils"
+	"github.com/openark/golib/log"
+	"github.com/openark/golib/sqlutils"
 )
 
 // GenerateAccessToken attempts to generate a new access token and returns the public

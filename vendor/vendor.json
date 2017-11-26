@@ -7,10 +7,16 @@
 			"revision": ""
 		},
 		{
-			"checksumSHA1": "3xVanMXn/lblhNfZYORorpd8N6E=",
+			"checksumSHA1": "VCKsz7001qwfA2bHLo/AOn0xos0=",
 			"path": "github.com/go-sql-driver/mysql",
-			"revision": "0b58b37b664c21f3010e836f1b931e1d0b0b0685",
-			"revisionTime": "2016-08-02T11:38:42Z"
+			"revision": "bf7f34fef176d890dfcc6e94319ac747291bc09a",
+			"revisionTime": "2017-07-03T06:14:36Z"
+		},
+		{
+			"checksumSHA1": "8ZzNq0gd68Ghtdvo/JdRqpzbnuM=",
+			"path": "github.com/montanaflynn/stats",
+			"revision": "f8cd06f93c6c1b06028caafb88b540fc820f77c1",
+			"revisionTime": "2016-11-02T19:40:25Z"
 		},
 		{
 			"checksumSHA1": "8ZzNq0gd68Ghtdvo/JdRqpzbnuM=",
@@ -25,10 +31,17 @@
 			"revisionTime": "2016-01-27T17:00:04Z"
 		},
 		{
+<<<<<<< HEAD
 			"checksumSHA1": "MhYzM3Q6KTkDYUhTsXOovFV9Sxw=",
 			"path": "github.com/sjmudd/stopwatch",
 			"revision": "107998bfdb155d73f7ed707f12999a809889d60e",
 			"revisionTime": "2016-04-12T12:39:19Z"
+=======
+			"checksumSHA1": "/r6ySR3hhHOXoxpCvWdCMXQMZxw=",
+			"path": "github.com/sjmudd/stopwatch",
+			"revision": "637ef30077b7a4d31e70e7a2b9e1e690333be7be",
+			"revisionTime": "2017-01-03T08:58:48Z"
+>>>>>>> refs/remotes/github/master
 		}
 	],
 	"rootPath": "github.com/github/orchestrator"

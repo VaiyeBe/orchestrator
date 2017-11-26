@@ -78,6 +78,23 @@ function hideLoader() {
   $(".ajaxLoader").css('visibility', 'hidden');
 }
 
+function isAnonymized() {
+  return ($.cookie("anonymize") == "true");
+}
+
+function isSilentUI() {
+  return ($.cookie("silent-ui") == "true");
+}
+
+function isCompactDisplay() {
+  return ($.cookie("compact-display") == "true");
+}
+
+function anonymizeInstanceId(instanceId) {
+  var tokens = instanceId.split("__");
+  return "instance-" + md5(tokens[1]).substring(0, 4) + ":" + tokens[2];
+}
+
 function appUrl(url) {
   // Create an absolute URL that respects URL-rewriting proxies,
   // such as the Kubernetes apiserver proxy.
@@ -94,7 +111,7 @@ function appUrl(url) {
 function visualizeBrand() {
   var img = $("<img>");
 
-  img.attr("src", appUrl("/images/octocat-logo-32.png")).attr("alt", "GitHub");
+  img.attr("src", appUrl("/images/orchestrator-logo-32.png")).attr("alt", "GitHub");
 
   if (document.domain && document.domain.indexOf("outbrain.com") >= 0) {
     img.attr("src", appUrl("/images/outbrain-logo-32.png")).attr("alt", "Outbrain");
@@ -138,7 +155,7 @@ function getInstanceTitle(host, port) {
 
 
 function addAlert(alertText, alertClass) {
-  if ($.cookie("anonymize") == "true") {
+  if (isAnonymized()) {
     return false;
   }
   if (typeof(alertClass) === 'undefined') {
@@ -159,15 +176,15 @@ function apiCommand(uri, hint) {
   showLoader();
   $.get(appUrl(uri), function(operationResult) {
     hideLoader();
-    if (operationResult.Code == "ERROR") {
-      addAlert(operationResult.Message)
-    } else {
-      reloadWithOperationResult(operationResult, hint);
+    reloadWithOperationResult(operationResult, hint);
+  }, "json").fail(function(operationResult) {
+    hideLoader();
+    if (operationResult.responseJSON.Code == "ERROR") {
+      addAlert(operationResult.responseJSON.Message)
     }
-  }, "json");
+  });
   return false;
 }
-
 
 function reloadWithMessage(msg, details, hint) {
   var hostname = "";
@@ -321,7 +338,11 @@ function openNodeModal(node) {
 
   addNodeModalDataAttribute("Has binary logs", booleanString(node.LogBinEnabled));
   if (node.LogBinEnabled) {
-    addNodeModalDataAttribute("Binlog format", node.Binlog_format);
+    var format = node.Binlog_format;
+    if (format == 'ROW' && node.BinlogRowImage != '') {
+      format = format + "/" + node.BinlogRowImage;
+    }
+    addNodeModalDataAttribute("Binlog format", format);
     var td = addNodeModalDataAttribute("Logs slave updates", booleanString(node.LogSlaveUpdatesEnabled));
     $('#node_modal button[data-btn=take-siblings]').appendTo(td.find("div"))
   }
@@ -344,8 +365,6 @@ function openNodeModal(node) {
     '<a href="' + appUrl('/web/audit/instance/' + node.Key.Hostname + '/' + node.Key.Port) + '">' + node.title + '</a>');
   addNodeModalDataAttribute("Agent",
     '<a href="' + appUrl('/web/agent/' + node.Key.Hostname) + '">' + node.Key.Hostname + '</a>');
-  addNodeModalDataAttribute("Long queries",
-    '<a href="' + appUrl('/web/long-queries?filter=' + node.Key.Hostname) + '">on ' + node.Key.Hostname + '</a>');
 
   $('#node_modal [data-btn]').unbind("click");
 
@@ -444,17 +463,20 @@ function openNodeModal(node) {
   });
 
   if (node.IsDowntimed) {
-    $('#node_modal [data-panel-type=downtime]').html("Downtimed by <strong>" + node.DowntimeOwner + "</strong> until " + node.DowntimeEndTimestamp);
-    $('#node_modal [data-description=downtime-status]').html(
+    $('#node_modal .end-downtime .panel-heading').html("Downtimed by <strong>" + node.DowntimeOwner + "</strong> until " + node.DowntimeEndTimestamp);
+    $('#node_modal .end-downtime .panel-body').html(
       node.DowntimeReason
     );
-    $('#node_modal [data-panel-type=begin-downtime]').hide();
+    $('#node_modal .begin-downtime').hide();
     $('#node_modal button[data-btn=begin-downtime]').hide();
-    $('#node_modal [data-panel-type=end-downtime]').show();
+
+    $('#node_modal .end-downtime').show();
+    $('#node_modal button[data-btn=end-downtime]').show();
   } else {
-    $('#node_modal [data-panel-type=downtime]').html("Downtime");
-    $('#node_modal [data-panel-type=begin-downtime]').show();
-    $('#node_modal [data-panel-type=end-downtime]').hide();
+    $('#node_modal .begin-downtime').show();
+    $('#node_modal button[data-btn=begin-downtime]').show();
+
+    $('#node_modal .end-downtime').hide();
     $('#node_modal button[data-btn=end-downtime]').hide();
   }
   $('#node_modal button[data-btn=skip-query]').hide();
@@ -558,7 +580,7 @@ function normalizeInstance(instance) {
   instance.replicationAttemptingToRun = instance.Slave_SQL_Running || instance.Slave_IO_Running;
   instance.replicationLagReasonable = Math.abs(instance.SlaveLagSeconds.Int64 - instance.SQLDelay) <= 10;
   instance.isSeenRecently = instance.SecondsSinceLastSeen.Valid && instance.SecondsSinceLastSeen.Int64 <= 3600;
-  instance.usingGTID = instance.UsingOracleGTID || instance.UsingMariaDBGTID;
+  instance.usingGTID = instance.UsingOracleGTID || instance.SupportsOracleGTID || instance.UsingMariaDBGTID;
   instance.isMaxScale = (instance.Version.indexOf("maxscale") >= 0);
 
   // used by cluster-tree
@@ -745,10 +767,13 @@ function normalizeInstances(instances, maintenanceList) {
 
 
 function renderInstanceElement(popoverElement, instance, renderType) {
+  // $(this).find("h3 .pull-left").html(anonymizeInstanceId(instanceId));
+  // $(this).find("h3").attr("title", anonymizeInstanceId(instanceId));
+  var anonymizedInstanceId = anonymizeInstanceId(instance.id);
   popoverElement.attr("data-nodeid", instance.id);
-  popoverElement.find("h3").attr('title', instance.title);
+  popoverElement.find("h3").attr('title', (isAnonymized() ? anonymizedInstanceId : instance.title));
   popoverElement.find("h3").html('&nbsp;<div class="pull-left">' +
-    instance.canonicalTitle + '</div><div class="pull-right"><a href="#"><span class="glyphicon glyphicon-cog" title="Open config dialog"></span></a></div>');
+    (isAnonymized() ? anonymizedInstanceId : instance.canonicalTitle) + '</div><div class="pull-right instance-glyphs"><span class="glyphicon glyphicon-cog" title="Open config dialog"></span></div>');
   var indicateLastSeenInStatus = false;
 
   if (instance.isAggregate) {
@@ -793,11 +818,17 @@ function renderInstanceElement(popoverElement, instance, renderType) {
     if (instance.HasReplicationFilters) {
       popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-filter" title="Using replication filters"></span> ');
     }
-    if (instance.LogBinEnabled && instance.LogSlaveUpdatesEnabled && !(instance.isMaster && !instance.isCoMaster)) {
+    if (instance.LogBinEnabled && instance.LogSlaveUpdatesEnabled) {
       popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-forward" title="Logs slave updates"></span> ');
     }
     if (instance.IsCandidate) {
       popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-heart" title="Candidate"></span> ');
+    }
+    if (instance.PromotionRule == "prefer_not") {
+      popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-thumbs-down" title="Prefer not promote"></span> ');
+    }
+    if (instance.PromotionRule == "must_not") {
+      popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-ban-circle" title="Must not promote"></span> ');
     }
     if (instance.inMaintenanceProblem()) {
       popoverElement.find("h3 div.pull-right").prepend('<span class="glyphicon glyphicon-wrench" title="In maintenance"></span> ');
@@ -826,15 +857,27 @@ function renderInstanceElement(popoverElement, instance, renderType) {
     if (instance.renderHint != "") {
       popoverElement.find("h3").addClass("label-" + instance.renderHint);
     }
-    var statusMessage = instance.SlaveLagSeconds.Int64 + ' seconds lag';
+    var statusMessage = instance.SlaveLagSeconds.Int64 + 's lag';
     if (indicateLastSeenInStatus) {
       statusMessage = 'seen ' + instance.SecondsSinceLastSeen.Int64 + ' seconds ago';
     }
-    var identityHtml = '' + instance.Version;
-    if (instance.LogBinEnabled) {
-      identityHtml += " " + instance.Binlog_format;
+    var identityHtml = '';
+    if (isAnonymized()) {
+      identityHtml += instance.Version.match(/[^.]+[.][^.]+/);
+    } else {
+      identityHtml += instance.Version;
     }
-    identityHtml += ', ' + instance.FlavorName;
+    if (instance.LogBinEnabled) {
+      var format = instance.Binlog_format;
+      if (format == 'ROW' && instance.BinlogRowImage != '') {
+        format = format + "/" + instance.BinlogRowImage.substring(0,1);
+      }
+      identityHtml += " " + format;
+    }
+    if (!isAnonymized()) {
+      identityHtml += ', ' + instance.FlavorName;
+    }
+
     var contentHtml = '' + '<div class="pull-right">' + statusMessage + ' </div>' + '<p class="instance-basic-info">' + identityHtml + '</p>';
     if (instance.isCoMaster) {
       contentHtml += '<p><strong>Co master</strong></p>';
@@ -849,20 +892,8 @@ function renderInstanceElement(popoverElement, instance, renderType) {
     }
     popoverElement.find(".instance-content").html(contentHtml);
   }
-  // if (instance.isCandidateMaster) {
-  // popoverElement.append('<h4 class="popover-footer"><strong>Master
-  // candidate</strong><div class="pull-right"><button class="btn btn-xs
-  // btn-default" data-command="make-master"><span class="glyphicon
-  // glyphicon-play"></span> Make master</button></div></h4>');
-  // } else if (instance.isMostAdvancedOfSiblings) {
-  // popoverElement.append('<h4
-  // class="popover-footer"><strong>Candidate</strong><div
-  // class="pull-right"><button class="btn btn-xs btn-default"
-  // data-command="make-local-master"><span class="glyphicon
-  // glyphicon-play"></span> Make local master</button></div></h4>');
-  // }
 
-  popoverElement.find("h3 a").click(function() {
+  popoverElement.find("h3 .instance-glyphs").click(function() {
     openNodeModal(instance);
     return false;
   });
@@ -886,12 +917,18 @@ function getParameterByName(name) {
 $(document).ready(function() {
   visualizeBrand();
 
-  $('body').css('background-image', 'url(' + appUrl('/images/tile.png') + ')');
-
-  $(".navbar-nav li").removeClass("active");
-  $(".navbar-nav li[data-nav-page='" + activePage() + "']").addClass("active");
-
   $.get(appUrl("/api/clusters-info"), function(clusters) {
+    clusters = clusters || [];
+
+    function sortAlphabetically(cluster1, cluster2) {
+      var cmp = cluster1.ClusterAlias.localeCompare(cluster2.ClusterAlias);
+      if (cmp == 0) {
+        cmp = cluster1.ClusterName.localeCompare(cluster2.ClusterName);
+      }
+      return cmp;
+    }
+    clusters.sort(sortAlphabetically);
+
     clusters.forEach(function(cluster) {
       var url = appUrl('/web/cluster/' + cluster.ClusterName)
       var title = cluster.ClusterName;
@@ -931,7 +968,7 @@ $(document).ready(function() {
   if (!isAuthorizedForAction()) {
     $("[data-nav-page=read-only]").css('display', 'inline-block');
   }
-  if (getUserId() != "") {
+  if (getUserId() != "" && !isAnonymized()) {
     $("[data-nav-page=user-id]").css('display', 'inline-block');
     $("[data-nav-page=user-id] a").html(" " + getUserId());
   }

@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/github/orchestrator/go/agent"
+	"github.com/github/orchestrator/go/collection"
 	"github.com/github/orchestrator/go/config"
 	"github.com/github/orchestrator/go/discovery"
 	"github.com/github/orchestrator/go/http"
@@ -30,15 +31,19 @@ import (
 	"github.com/github/orchestrator/go/logic"
 	"github.com/github/orchestrator/go/process"
 	"github.com/github/orchestrator/go/ssl"
+
 	"github.com/go-martini/martini"
 	"github.com/martini-contrib/auth"
 	"github.com/martini-contrib/gzip"
 	"github.com/martini-contrib/render"
-	"github.com/outbrain/golib/log"
+	"github.com/openark/golib/log"
 )
+
+const discoveryMetricsName = "DISCOVERY_METRICS"
 
 var sslPEMPassword []byte
 var agentSSLPEMPassword []byte
+var discoveryMetrics *collection.Collection
 
 // Http starts serving
 func Http(continuousDiscovery bool) {
@@ -118,12 +123,18 @@ func standardHttp(continuousDiscovery bool) {
 
 	if continuousDiscovery {
 		// start to expire metric collection info
+<<<<<<< HEAD
 		log.Infof("MetricCollection: Expiring values every second and keeping values for %v seconds", config.Config.DiscoveryCollectionRetentionSeconds)
 		discovery.MC = discovery.NewMetricCollection(time.Duration(config.Config.DiscoveryCollectionRetentionSeconds) * time.Second)
+=======
+		discoveryMetrics = collection.CreateOrReturnCollection(discoveryMetricsName)
+		discoveryMetrics.SetExpirePeriod(time.Duration(config.Config.DiscoveryCollectionRetentionSeconds) * time.Second)
+>>>>>>> refs/remotes/github/master
 
 		log.Info("Starting Discovery")
 		go logic.ContinuousDiscovery()
 	}
+
 	log.Info("Registering endpoints")
 	http.API.URLPrefix = config.Config.URLPrefix
 	http.Web.URLPrefix = config.Config.URLPrefix

@@ -91,6 +91,10 @@ func (ns *NamedStopwatch) Start(name string) {
 		s.Start()
 	}
 }
+<<<<<<< HEAD
+=======
+
+>>>>>>> refs/remotes/github/master
 // StartMany allows you to start several stopwatches in one go
 func (ns *NamedStopwatch) StartMany(names []string) {
 	if ns == nil {
@@ -107,7 +111,15 @@ func (ns *NamedStopwatch) Stop(name string) {
 		return
 	}
 	if s, ok := ns.stopwatches[name]; ok {
+<<<<<<< HEAD
 		s.Stop()
+=======
+		if s.IsRunning() {
+			s.Stop()
+		} else {
+			fmt.Printf("WARNING: NamedStopwatch.Stop(%q) IsRunning is false\n", name)
+		}
+>>>>>>> refs/remotes/github/master
 	}
 }
 

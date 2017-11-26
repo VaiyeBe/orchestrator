@@ -1,5 +1,9 @@
 /*
+<<<<<<< HEAD
    Copyright 2016 Simon J Mudd
+=======
+   Copyright 2017 Simon J Mudd
+>>>>>>> refs/remotes/github/master
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -34,6 +38,7 @@ type Metric struct {
 	Err             error            // error (if applicable) doing the discovery process
 }
 
+<<<<<<< HEAD
 // Equal compares if to Metrics are the same
 func (m *Metric) Equal(m2 *Metric) bool {
 	if m == nil && m2 == nil {
@@ -61,4 +66,9 @@ func MetricsEqual(m1, m2 [](*Metric)) bool {
 		}
 	}
 	return true
+=======
+// When did the metric happen
+func (m Metric) When() time.Time {
+	return m.Timestamp
+>>>>>>> refs/remotes/github/master
 }
