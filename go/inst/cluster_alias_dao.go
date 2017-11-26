@@ -48,6 +48,18 @@ func ReadClusterNameByAlias(alias string) (clusterName string, err error) {
 	return clusterName, err
 }
 
+// DeduceClusterName attempts to resolve a cluster name given a name or alias.
+// If unsuccessful to match by alias, the function returns the same given string
+func DeduceClusterName(nameOrAlias string) (clusterName string, err error) {
+	if nameOrAlias == "" {
+		return "", fmt.Errorf("empty cluster name")
+	}
+	if name, err := ReadClusterNameByAlias(nameOrAlias); err == nil {
+		return name, nil
+	}
+	return nameOrAlias, nil
+}
+
 // ReadAliasByClusterName returns the cluster alias for the given cluster name,
 // or the cluster name itself if not explicit alias found
 func ReadAliasByClusterName(clusterName string) (alias string, err error) {
@@ -68,13 +80,13 @@ func ReadAliasByClusterName(clusterName string) (alias string, err error) {
 }
 
 // WriteClusterAlias will write (and override) a single cluster name mapping
-func WriteClusterAlias(clusterName string, alias string) error {
+func writeClusterAlias(clusterName string, alias string) error {
 	writeFunc := func() error {
 		_, err := db.ExecOrchestrator(`
 			replace into
-					cluster_alias (cluster_name, alias)
+					cluster_alias (cluster_name, alias, last_registered)
 				values
-					(?, ?)
+					(?, ?, now())
 			`,
 			clusterName, alias)
 		return log.Errore(err)
@@ -82,8 +94,8 @@ func WriteClusterAlias(clusterName string, alias string) error {
 	return ExecDBWriteFunc(writeFunc)
 }
 
-// WriteClusterAliasManualOverride will write (and override) a single cluster name mapping
-func WriteClusterAliasManualOverride(clusterName string, alias string) error {
+// writeClusterAliasManualOverride will write (and override) a single cluster name mapping
+func writeClusterAliasManualOverride(clusterName string, alias string) error {
 	writeFunc := func() error {
 		_, err := db.ExecOrchestrator(`
 			replace into
@@ -106,14 +118,9 @@ func UpdateClusterAliases() error {
 					cluster_alias (alias, cluster_name, last_registered)
 				select
 				    suggested_cluster_alias,
-						substring_index(group_concat(
-							cluster_name order by
-								((last_checked <= last_seen) is true) desc,
-								read_only asc,
-								num_slave_hosts desc
-							), ',', 1) as cluster_name,
-				    NOW()
-				  from
+						cluster_name,
+						now()
+					from
 				    database_instance
 				    left join database_instance_downtime using (hostname, port)
 				  where
@@ -123,9 +130,11 @@ func UpdateClusterAliases() error {
 								database_instance_downtime.downtime_active = 1
 								and database_instance_downtime.end_timestamp > now()
 								and database_instance_downtime.reason = ?
-							, false) is false
-				  group by
-				    suggested_cluster_alias
+							, 0) = 0
+					order by
+						ifnull(last_checked <= last_seen, 0) asc,
+						read_only desc,
+						num_slave_hosts asc
 			`, DowntimeLostInRecoveryMessage)
 		return log.Errore(err)
 	}
@@ -184,4 +193,33 @@ func ReplaceAliasClusterName(oldClusterName string, newClusterName string) (err 
 		}
 	}
 	return err
+}
+
+// ReadUnambiguousSuggestedClusterAliases reads hostname:port who have suggested cluster aliases,
+// where no one else shares said suggested cluster alias. Such hostname:port are likely true owners
+// of the alias.
+func ReadUnambiguousSuggestedClusterAliases() (result map[string]InstanceKey, err error) {
+	result = map[string]InstanceKey{}
+
+	query := `
+		select
+			suggested_cluster_alias,
+			min(hostname) as hostname,
+			min(port) as port
+		from
+			database_instance
+		where
+			suggested_cluster_alias != ''
+		group by
+			suggested_cluster_alias
+		having
+			count(*) = 1
+		`
+	err = db.QueryOrchestrator(query, sqlutils.Args(), func(m sqlutils.RowMap) error {
+		key := InstanceKey{Hostname: m.GetString("hostname"), Port: m.GetInt("port")}
+		suggestedAlias := m.GetString("suggested_cluster_alias")
+		result[suggestedAlias] = key
+		return nil
+	})
+	return result, err
 }

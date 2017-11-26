@@ -63,7 +63,7 @@ func WriteResolvedHostname(hostname string, resolvedHostname string) error {
 				values
 					(?, ?, NOW())
 				on duplicate key update
-					hostname=if(values(hostname) != resolved_hostname, values(hostname), hostname),
+					hostname=values(hostname),
 					resolved_timestamp=values(resolved_timestamp)
 			`,
 				hostname,
@@ -144,6 +144,19 @@ func ReadAllHostnameUnresolves() ([]HostnameUnresolve, error) {
 	return unres, log.Errore(err)
 }
 
+// ReadAllHostnameUnresolves returns the content of the hostname_unresolve table
+func ReadAllHostnameUnresolvesRegistrations() (registrations []HostnameRegistration, err error) {
+	unresolves, err := ReadAllHostnameUnresolves()
+	if err != nil {
+		return registrations, err
+	}
+	for _, unresolve := range unresolves {
+		registration := NewHostnameRegistration(&InstanceKey{Hostname: unresolve.hostname}, unresolve.unresolvedHostname)
+		registrations = append(registrations, *registration)
+	}
+	return registrations, nil
+}
+
 // readUnresolvedHostname reverse-reads hostname resolve. It returns a hostname which matches given pattern and resovles to resolvedHostname,
 // or, in the event no such hostname is found, the given resolvedHostname, unchanged.
 func readUnresolvedHostname(hostname string) (string, error) {
@@ -215,7 +228,7 @@ func WriteHostnameUnresolve(instanceKey *InstanceKey, unresolvedHostname string)
 			return log.Errore(err)
 		}
 		_, err = db.ExecOrchestrator(`
-	        	replace into hostname_unresolve_history (
+        	replace into hostname_unresolve_history (
         		hostname,
         		unresolved_hostname,
         		last_registered)
@@ -228,11 +241,11 @@ func WriteHostnameUnresolve(instanceKey *InstanceKey, unresolvedHostname string)
 	return ExecDBWriteFunc(writeFunc)
 }
 
-// DeregisterHostnameUnresolve removes an unresovle entry
-func DeregisterHostnameUnresolve(instanceKey *InstanceKey) error {
+// DeleteHostnameUnresolve removes an unresolve entry
+func DeleteHostnameUnresolve(instanceKey *InstanceKey) error {
 	writeFunc := func() error {
 		_, err := db.ExecOrchestrator(`
-        	delete from hostname_unresolve
+      	delete from hostname_unresolve
 				where hostname=?
 				`, instanceKey.Hostname,
 		)
@@ -245,7 +258,7 @@ func DeregisterHostnameUnresolve(instanceKey *InstanceKey) error {
 func ExpireHostnameUnresolve() error {
 	writeFunc := func() error {
 		_, err := db.ExecOrchestrator(`
-        	delete from hostname_unresolve
+      	delete from hostname_unresolve
 				where last_registered < NOW() - INTERVAL ? MINUTE
 				`, config.Config.ExpiryHostnameResolvesMinutes,
 		)
@@ -260,8 +273,8 @@ func ForgetExpiredHostnameResolves() error {
 			delete
 				from hostname_resolve
 			where
-				resolved_timestamp < NOW() - interval (? * 2) minute`,
-		config.Config.ExpiryHostnameResolvesMinutes,
+				resolved_timestamp < NOW() - interval ? minute`,
+		2*config.Config.ExpiryHostnameResolvesMinutes,
 	)
 	return err
 }

@@ -20,6 +20,7 @@ At this time recovery requires either GTID, [Pseudo GTID](#pseudo-gtid) or Binlo
 * DeadIntermediateMasterWithSingleSlaveFailingToConnect
 * DeadIntermediateMasterWithSingleSlave
 * DeadIntermediateMasterAndSomeSlaves
+* DeadIntermediateMasterAndSlaves
 * AllIntermediateMasterSlavesFailingToConnectOrDead
 * AllIntermediateMasterSlavesNotReplicating
 * UnreachableIntermediateMaster
@@ -90,7 +91,7 @@ have replication filters? Which versions of MySQL? etc.). It is very (very) like
 A "really-not-simple" recovery case is that of a `DeadMaster`. `orchestrator` will try to:
 
 - Find the most advanced replica
-- Promote it, enslaving its siblings
+- Promote it, taking over its siblings
 - Bring siblings up to date
 - Check if there was a pre-defined "candidate replica"
 - Promote that over the previously chosen replica
@@ -124,13 +125,23 @@ Manual recoveries don't block on `RecoveryPeriodBlockSeconds` (read more in next
 `RecoverMasterClusterFilters` and `RecoverIntermediateMasterClusterFilters`. A manual recovery will only block on
 an already running (and incomplete) recovery on the very same instance the manual recovery wishes to operate on.
 
+### Manual, forced failover
+
+Perhaps `orchestrator` doesn't see the big picture. You wish to kick a master failover _right now_. You will run:
+
+* Command line: `orchestrator -c force-master-failover --alias mycluster`
+
+  or `orchestrator -c force-master-failover -i instance.in.that.cluster`
+* Web API: `/api/force-master-failover/mycluster`
+
+  or `/api/force-master-failover/instance.in.that.cluster/3306`
+
+
 ### Automated recovery
 
-By default turned off, automatic recovery may be applied for specific clusters. For greater resolution, different configuration
-applies for master recovery and for intermediate-master recovery. Detailed breakdown of recovery-related configuration follows.
+Opt-in, automatic recovery may be applied for specific clusters. For greater resolution, different configuration applies for master recovery and for intermediate-master recovery. Detailed breakdown of recovery-related configuration follows.
 
-The analysis mechanism runs at all times, and checks periodically for failure/recovery scenarios. It will make an
-automated recovery for:
+The analysis mechanism runs at all times, and checks periodically for failure/recovery scenarios. It will make an automated recovery for:
 
 - An actionable type of scenario (duh)
 - For an instance that is not downtimed
@@ -171,7 +182,7 @@ Downtime is explicitly created for this purpose: to allow the DBA a way to suppr
 `orchestrator` supports hooks -- external scripts invoked through the recovery process. These are arrays of commands invoked through
 shell, in particular `bash`. Hooks are:
 
-- `OnFailureDetectionProcesses`: called when a failure/recovery known scenario is detected. These scripts are called befroe even
+- `OnFailureDetectionProcesses`: called when a failure/recovery known scenario is detected. These scripts are called before even
   deciding whether action should be taken.
 - `PreFailoverProcesses`: called after deciding to take action on a scenario. Order of execution is sequential. A failure
   (non-zero exit status) of any process *aborts the recovery operation*. This is your chance to decide whether to go on with
@@ -266,9 +277,6 @@ Elaborating on recovery-related configuration:
 - `DetachLostReplicasAfterMasterFailover`: in the case of master promotion and assuming that some replicas could not make it into
 the refactored topology, should orchestrator forcibly issue a `detach-replica` command to make sure they don't accidentally resume
 replication in the future.
-
-- `MasterFailoverLostInstancesDowntimeMinutes`: when non-zero, and after master promotion, orchestrator will downtime lost
-replicas and dead master for given number of minutes.
 
 - `PostponeSlaveRecoveryOnLagMinutes`: some recovery operations can be pushed to be the very last steps; so that more urgent
 operations (e.g. change DNS entries) could be applied faster. Fixing replicas that are lagging at time of recovery (either because of `MASTER_DELAY` configuration or just because they were busy) could take a substantial time due to binary log exhaustive search (GTID & Pseudo-GTID). This variable defines the threshold above which a lagging replica's rewiring is pushed till the last moment.

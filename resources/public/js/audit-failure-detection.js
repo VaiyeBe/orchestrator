@@ -5,7 +5,9 @@ $(document).ready(function() {
     uri = "/api/audit-failure-detection/id/" + detectionId();
   }
   $.get(appUrl(uri), function(auditEntries) {
+    auditEntries = auditEntries || [];
     $.get(appUrl("/api/replication-analysis-changelog"), function(analysisChangelog) {
+      analysisChangelog = analysisChangelog || [];
       displayAudit(auditEntries, analysisChangelog);
     }, "json");
   }, "json");
@@ -48,7 +50,7 @@ $(document).ready(function() {
       var moreInfo = "";
       moreInfo += '<div>Detected: ' + audit.RecoveryStartTimestamp + '</div>';
       if (audit.AnalysisEntry.SlaveHosts.length > 0) {
-        moreInfo += '<div>' + audit.AnalysisEntry.CountReplicas + ' replicting hosts :<ul>';
+        moreInfo += '<div>' + audit.AnalysisEntry.CountReplicas + ' replicating hosts :<ul>';
         audit.AnalysisEntry.SlaveHosts.forEach(function(instanceKey) {
           moreInfo += "<li><code>" + getInstanceTitle(instanceKey.Hostname, instanceKey.Port) + "</code></li>";
         });
@@ -57,7 +59,7 @@ $(document).ready(function() {
       var changelog = changelogMap[getInstanceId(audit.AnalysisEntry.AnalyzedInstanceKey.Hostname, audit.AnalysisEntry.AnalyzedInstanceKey.Port)];
       if (changelog) {
         moreInfo += '<div>Changelog :<ul>';
-        changelog.split(",").reverse().forEach(function(changelogEntry) {
+        changelog.reverse().forEach(function(changelogEntry) {
           var changelogEntryTokens = changelogEntry.split(';');
           var changelogEntryTimestamp = changelogEntryTokens[0];
           var changelogEntryAnalysis = changelogEntryTokens[1];

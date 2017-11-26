@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/github/orchestrator/go/config"
@@ -36,9 +37,11 @@ const (
 	StopReplicationNicely                       = "StopReplicationNicely"
 )
 
+var asciiFillerCharacter = " "
+
 // getASCIITopologyEntry will get an ascii topology tree rooted at given instance. Ir recursively
 // draws the tree
-func getASCIITopologyEntry(depth int, instance *Instance, replicationMap map[*Instance]([]*Instance), extendedOutput bool) []string {
+func getASCIITopologyEntry(depth int, instance *Instance, replicationMap map[*Instance]([]*Instance), extendedOutput bool, fillerCharacter string) []string {
 	if instance == nil {
 		return []string{}
 	}
@@ -47,20 +50,20 @@ func getASCIITopologyEntry(depth int, instance *Instance, replicationMap map[*In
 	}
 	prefix := ""
 	if depth > 0 {
-		prefix = strings.Repeat(" ", (depth-1)*2)
+		prefix = strings.Repeat(fillerCharacter, (depth-1)*2)
 		if instance.ReplicaRunning() && instance.IsLastCheckValid && instance.IsRecentlyChecked {
-			prefix += "+ "
+			prefix += "+" + fillerCharacter
 		} else {
-			prefix += "- "
+			prefix += "-" + fillerCharacter
 		}
 	}
 	entry := fmt.Sprintf("%s%s", prefix, instance.Key.DisplayString())
 	if extendedOutput {
-		entry = fmt.Sprintf("%s %s", entry, instance.HumanReadableDescription())
+		entry = fmt.Sprintf("%s%s%s", entry, fillerCharacter, instance.HumanReadableDescription())
 	}
 	result := []string{entry}
 	for _, replica := range replicationMap[instance] {
-		replicasResult := getASCIITopologyEntry(depth+1, replica, replicationMap, extendedOutput)
+		replicasResult := getASCIITopologyEntry(depth+1, replica, replicationMap, extendedOutput, fillerCharacter)
 		result = append(result, replicasResult...)
 	}
 	return result
@@ -68,6 +71,7 @@ func getASCIITopologyEntry(depth int, instance *Instance, replicationMap map[*In
 
 // ASCIITopology returns a string representation of the topology of given cluster.
 func ASCIITopology(clusterName string, historyTimestampPattern string) (result string, err error) {
+	fillerCharacter := asciiFillerCharacter
 	var instances [](*Instance)
 	if historyTimestampPattern == "" {
 		instances, err = ReadClusterInstances(clusterName)
@@ -102,12 +106,12 @@ func ASCIITopology(clusterName string, historyTimestampPattern string) (result s
 	var entries []string
 	if masterInstance != nil {
 		// Single master
-		entries = getASCIITopologyEntry(0, masterInstance, replicationMap, historyTimestampPattern == "")
+		entries = getASCIITopologyEntry(0, masterInstance, replicationMap, historyTimestampPattern == "", fillerCharacter)
 	} else {
 		// Co-masters? For visualization we put each in its own branch while ignoring its other co-masters.
 		for _, instance := range instances {
 			if instance.IsCoMaster {
-				entries = append(entries, getASCIITopologyEntry(1, instance, replicationMap, historyTimestampPattern == "")...)
+				entries = append(entries, getASCIITopologyEntry(1, instance, replicationMap, historyTimestampPattern == "", fillerCharacter)...)
 			}
 		}
 	}
@@ -121,7 +125,7 @@ func ASCIITopology(clusterName string, historyTimestampPattern string) (result s
 			entryIndent := strings.Index(entry, "[")
 			if maxIndent > entryIndent {
 				tokens := strings.Split(entry, "[")
-				newEntry := fmt.Sprintf("%s%s[%s", tokens[0], strings.Repeat(" ", maxIndent-entryIndent), tokens[1])
+				newEntry := fmt.Sprintf("%s%s[%s", tokens[0], strings.Repeat(fillerCharacter, maxIndent-entryIndent), tokens[1])
 				entries[i] = newEntry
 			}
 		}
@@ -592,6 +596,7 @@ func MoveBelowGTID(instanceKey, otherKey *InstanceKey) (*Instance, error) {
 // moveReplicasViaGTID moves a list of replicas under another instance via GTID, returning those replicas
 // that could not be moved (do not use GTID)
 func moveReplicasViaGTID(replicas [](*Instance), other *Instance) (movedReplicas [](*Instance), unmovedReplicas [](*Instance), err error, errs []error) {
+	replicas = RemoveNilInstances(replicas)
 	replicas = RemoveInstance(replicas, &other.Key)
 	if len(replicas) == 0 {
 		// Nothing to do
@@ -1425,7 +1430,7 @@ func MatchBelow(instanceKey, otherKey *InstanceKey, requireInstanceMaintenance b
 	}
 	log.Debugf("%+v will match below %+v at %+v; validated events: %d", *instanceKey, *otherKey, *nextBinlogCoordinatesToMatch, countMatchedEvents)
 
-	// Drum roll......
+	// Drum roll...
 	instance, err = ChangeMasterTo(instanceKey, otherKey, nextBinlogCoordinatesToMatch, false, GTIDHintDeny)
 	if err != nil {
 		goto Cleanup
@@ -1649,8 +1654,13 @@ Cleanup:
 }
 
 // sortInstances shuffles given list of instances according to some logic
+func sortInstancesDataCenterHint(instances [](*Instance), dataCenterHint string) {
+	sort.Sort(sort.Reverse(NewInstancesSorterByExec(instances, dataCenterHint)))
+}
+
+// sortInstances shuffles given list of instances according to some logic
 func sortInstances(instances [](*Instance)) {
-	sort.Sort(sort.Reverse(InstancesByExecBinlogCoordinates(instances)))
+	sortInstancesDataCenterHint(instances, "")
 }
 
 // getReplicasForSorting returns a list of replicas of a given master potentially for candidate choosing
@@ -1663,18 +1673,22 @@ func getReplicasForSorting(masterKey *InstanceKey, includeBinlogServerSubReplica
 	return replicas, err
 }
 
+func sortedReplicas(replicas [](*Instance), stopReplicationMethod StopReplicationMethod) [](*Instance) {
+	return sortedReplicasDataCenterHint(replicas, stopReplicationMethod, "")
+}
+
 // sortedReplicas returns the list of replicas of some master, sorted by exec coordinates
 // (most up-to-date replica first).
 // This function assumes given `replicas` argument is indeed a list of instances all replicating
 // from the same master (the result of `getReplicasForSorting()` is appropriate)
-func sortedReplicas(replicas [](*Instance), stopReplicationMethod StopReplicationMethod) [](*Instance) {
+func sortedReplicasDataCenterHint(replicas [](*Instance), stopReplicationMethod StopReplicationMethod, dataCenterHint string) [](*Instance) {
 	if len(replicas) == 0 {
 		return replicas
 	}
 	replicas = StopSlaves(replicas, stopReplicationMethod, time.Duration(config.Config.InstanceBulkOperationsWaitTimeoutSeconds)*time.Second)
 	replicas = RemoveNilInstances(replicas)
 
-	sortInstances(replicas)
+	sortInstancesDataCenterHint(replicas, dataCenterHint)
 	for _, replica := range replicas {
 		log.Debugf("- sorted replica: %+v %+v", replica.Key, replica.ExecBinlogCoordinates)
 	}
@@ -1695,9 +1709,80 @@ func GetSortedReplicas(masterKey *InstanceKey, stopReplicationMethod StopReplica
 	return replicas, err
 }
 
+func MultiMatchBelowIndependently(replicas [](*Instance), belowKey *InstanceKey, postponedFunctionsContainer *PostponedFunctionsContainer) (matchedReplicas [](*Instance), belowInstance *Instance, err error, errs []error) {
+	belowInstance, found, err := ReadInstance(belowKey)
+	if err != nil || !found {
+		return matchedReplicas, belowInstance, err, errs
+	}
+
+	replicas = RemoveInstance(replicas, belowKey)
+	if len(replicas) == 0 {
+		// Nothing to do
+		return replicas, belowInstance, err, errs
+	}
+
+	log.Infof("Will match %+v replicas below %+v via Pseudo-GTID, independently", len(replicas), belowKey)
+
+	barrier := make(chan *InstanceKey)
+	replicaMutex := &sync.Mutex{}
+
+	for _, replica := range replicas {
+		replica := replica
+
+		// Parallelize repoints
+		go func() {
+			defer func() { barrier <- &replica.Key }()
+			matchFunc := func() error {
+				replica, _, replicaErr := MatchBelow(&replica.Key, belowKey, true)
+
+				replicaMutex.Lock()
+				defer replicaMutex.Unlock()
+
+				if replicaErr == nil {
+					matchedReplicas = append(matchedReplicas, replica)
+				} else {
+					errs = append(errs, replicaErr)
+				}
+				return replicaErr
+			}
+			postpone := false
+			if postponedFunctionsContainer != nil {
+				if config.Config.PostponeReplicaRecoveryOnLagMinutes > 0 &&
+					replica.SQLDelay > config.Config.PostponeReplicaRecoveryOnLagMinutes*60 {
+					// This replica is lagging very much, AND
+					// we're configured to postpone operation on this replica so as not to delay everyone else.
+					postpone = true
+				}
+				if replica.LastDiscoveryLatency > ReasonableDiscoveryLatency {
+					postpone = true
+				}
+			}
+			if postpone {
+				postponedFunctionsContainer.AddPostponedFunction(matchFunc, fmt.Sprintf("multi-match-below-independent %+v", replica.Key))
+				// We bail out and trust our invoker to later call upon this postponed function
+			} else {
+				ExecuteOnTopology(func() { matchFunc() })
+			}
+		}()
+	}
+	for range replicas {
+		<-barrier
+	}
+	if len(errs) == len(replicas) {
+		// All returned with error
+		return matchedReplicas, belowInstance, fmt.Errorf("MultiMatchBelowIndependently: Error on all %+v operations", len(errs)), errs
+	}
+	AuditOperation("multi-match-below-independent", belowKey, fmt.Sprintf("matched %d/%d replicas below %+v via Pseudo-GTID", len(matchedReplicas), len(replicas), belowKey))
+
+	return matchedReplicas, belowInstance, err, errs
+}
+
 // MultiMatchBelow will efficiently match multiple replicas below a given instance.
 // It is assumed that all given replicas are siblings
 func MultiMatchBelow(replicas [](*Instance), belowKey *InstanceKey, replicasAlreadyStopped bool, postponedFunctionsContainer *PostponedFunctionsContainer) ([](*Instance), *Instance, error, []error) {
+	if config.Config.PseudoGTIDPreferIndependentMultiMatch {
+		return MultiMatchBelowIndependently(replicas, belowKey, postponedFunctionsContainer)
+	}
 	res := [](*Instance){}
 	errs := []error{}
 	replicaMutex := make(chan bool, 1)
@@ -1740,7 +1825,7 @@ func MultiMatchBelow(replicas [](*Instance), belowKey *InstanceKey, replicasAlre
 		replicas = StopSlavesNicely(replicas, time.Duration(config.Config.InstanceBulkOperationsWaitTimeoutSeconds)*time.Second)
 	}
 	replicas = RemoveNilInstances(replicas)
-	sort.Sort(sort.Reverse(InstancesByExecBinlogCoordinates(replicas)))
+	sort.Sort(sort.Reverse(NewInstancesSorterByExec(replicas, belowInstance.DataCenter)))
 
 	// Optimizations:
 	// replicas which broke on the same Exec-coordinates can be handled in the exact same way:
@@ -1786,7 +1871,7 @@ func MultiMatchBelow(replicas [](*Instance), belowKey *InstanceKey, replicasAlre
 						len(bucketReplicas) == 1 {
 						// This replica is the only one in the bucket, AND it's lagging very much, AND
 						// we're configured to postpone operation on this replica so as not to delay everyone else.
-						(*postponedFunctionsContainer).AddPostponedFunction(matchFunc)
+						postponedFunctionsContainer.AddPostponedFunction(matchFunc, fmt.Sprintf("multi-match-below %+v", replica.Key))
 						return
 						// We bail out and trust our invoker to later call upon this postponed function
 					}
@@ -2144,6 +2229,10 @@ func GetCandidateReplica(masterKey *InstanceKey, forRematchPurposes bool) (*Inst
 	laterReplicas := [](*Instance){}
 	cannotReplicateReplicas := [](*Instance){}
 
+	dataCenterHint := ""
+	if master, _, _ := ReadInstance(masterKey); master != nil {
+		dataCenterHint = master.DataCenter
+	}
 	replicas, err := getReplicasForSorting(masterKey, false)
 	if err != nil {
 		return candidateReplica, aheadReplicas, equalReplicas, laterReplicas, cannotReplicateReplicas, err
@@ -2152,7 +2241,7 @@ func GetCandidateReplica(masterKey *InstanceKey, forRematchPurposes bool) (*Inst
 	if forRematchPurposes {
 		stopReplicationMethod = StopReplicationNicely
 	}
-	replicas = sortedReplicas(replicas, stopReplicationMethod)
+	replicas = sortedReplicasDataCenterHint(replicas, stopReplicationMethod, dataCenterHint)
 	if err != nil {
 		return candidateReplica, aheadReplicas, equalReplicas, laterReplicas, cannotReplicateReplicas, err
 	}

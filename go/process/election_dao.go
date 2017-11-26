@@ -19,34 +19,93 @@ package process
 import (
 	"github.com/github/orchestrator/go/config"
 	"github.com/github/orchestrator/go/db"
+	"github.com/github/orchestrator/go/raft"
 	"github.com/openark/golib/log"
 	"github.com/openark/golib/sqlutils"
 )
 
 // AttemptElection tries to grab leadership (become active node)
 func AttemptElection() (bool, error) {
-	sqlResult, err := db.ExecOrchestrator(`
-			insert ignore into active_node (
-					anchor, hostname, token, first_seen_active, last_seen_active
-				) values (
-					1, ?, ?, now(), now()
-				) on duplicate key update
-					hostname          = if(last_seen_active < now() - interval ? second, values(hostname),          hostname),
-					token             = if(last_seen_active < now() - interval ? second, values(token),             token),
-					first_seen_active = if(last_seen_active < now() - interval ? second, values(first_seen_active), first_seen_active),
-					last_seen_active = if(hostname = values(hostname) and token = values(token), values(last_seen_active), last_seen_active)
-			`,
-		ThisHostname, ProcessToken.Hash, config.Config.ActiveNodeExpireSeconds, config.Config.ActiveNodeExpireSeconds, config.Config.ActiveNodeExpireSeconds,
-	)
-	if err != nil {
-		return false, log.Errore(err)
+	{
+		sqlResult, err := db.ExecOrchestrator(`
+		insert ignore into active_node (
+				anchor, hostname, token, first_seen_active, last_seen_active
+			) values (
+				1, ?, ?, now(), now()
+			)
+		`,
+			ThisHostname, ProcessToken.Hash,
+		)
+		if err != nil {
+			return false, log.Errore(err)
+		}
+		rows, err := sqlResult.RowsAffected()
+		if err != nil {
+			return false, log.Errore(err)
+		}
+		if rows > 0 {
+			// We managed to insert a row
+			return true, nil
+		}
 	}
-	rows, err := sqlResult.RowsAffected()
-	return (rows > 0), log.Errore(err)
+	{
+		// takeover from a node that has been inactive
+		sqlResult, err := db.ExecOrchestrator(`
+			update active_node set
+				hostname = ?,
+				token = ?,
+				first_seen_active=now(),
+				last_seen_active=now()
+			where
+				anchor = 1
+			  and last_seen_active < (now() - interval ? second)
+		`,
+			ThisHostname, ProcessToken.Hash, config.ActiveNodeExpireSeconds,
+		)
+		if err != nil {
+			return false, log.Errore(err)
+		}
+		rows, err := sqlResult.RowsAffected()
+		if err != nil {
+			return false, log.Errore(err)
+		}
+		if rows > 0 {
+			// We managed to update a row: overtaking a previous leader
+			return true, nil
+		}
+	}
+	{
+		// Update last_seen_active is this very node is already the active node
+		sqlResult, err := db.ExecOrchestrator(`
+			update active_node set
+				last_seen_active=now()
+			where
+				anchor = 1
+				and hostname = ?
+				and token = ?
+		`,
+			ThisHostname, ProcessToken.Hash,
+		)
+		if err != nil {
+			return false, log.Errore(err)
+		}
+		rows, err := sqlResult.RowsAffected()
+		if err != nil {
+			return false, log.Errore(err)
+		}
+		if rows > 0 {
+			// Reaffirmed our own leadership
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // GrabElection forcibly grabs leadership. Use with care!!
 func GrabElection() error {
+	if orcraft.IsRaftEnabled() {
+		return log.Errorf("Cannot GrabElection on raft setup")
+	}
 	_, err := db.ExecOrchestrator(`
 			replace into active_node (
 					anchor, hostname, token, first_seen_active, last_seen_active
@@ -61,6 +120,10 @@ func GrabElection() error {
 
 // Reelect clears the way for re-elections. Active node is immediately demoted.
 func Reelect() error {
+	if orcraft.IsRaftEnabled() {
+		// return log.Errorf("Cannot Reelect on raft setup")
+		orcraft.StepDown()
+	}
 	_, err := db.ExecOrchestrator(`delete from active_node where anchor = 1`)
 	return log.Errore(err)
 }

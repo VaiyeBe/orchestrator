@@ -148,7 +148,7 @@ func SyncReplicaRelayLogs(instance, fromInstance *inst.Instance, syncRelaylogsCh
 		if !found {
 			return instance, err
 		}
-		log.Debugf("SyncReplicaRelayLogs: correlated next-coordinates on %+v are %+v", fromInstance.Key, *nextCoordinates)
+		log.Debugf("SyncReplicaRelayLogs: correlated next-coordinates of %+v on %+v are %+v", instance.Key, fromInstance.Key, *nextCoordinates)
 
 		// We now have the correlation info needed to proceed with remote calls
 		sudoCommand := ""
@@ -323,7 +323,8 @@ func SyncReplicasRelayLogs(
 		if toBePostponed {
 			log.Debugf("SyncReplicasRelayLogs: postponing relaylog sync on %+v", applyToReplica.Key)
 			postponedReplicas = append(postponedReplicas, applyToReplica)
-			(*postponedFunctionsContainer).AddPostponedFunction(func() error { return applyToReplicaFunc(applyToReplica) })
+			f := func() error { return applyToReplicaFunc(applyToReplica) }
+			(*postponedFunctionsContainer).AddPostponedFunction(f, fmt.Sprintf("sync-replicas-relaylogs %+v", applyToReplica.Key))
 		} else {
 			log.Debugf("SyncReplicasRelayLogs: applying relaylog sync on %+v", applyToReplica.Key)
 			countImmediateApply++
